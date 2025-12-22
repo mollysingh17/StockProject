@@ -38,3 +38,27 @@ def add_sma_crossover_signal(
     # Signal: 1 when short SMA is above long SMA (uptrend), else 0
     df["signal"] = (df[f"sma_{short_window}"] > df[f"sma_{long_window}"]).astype(int)
     return df
+
+def add_sma_crossover_signal_confirmed(
+    df: pd.DataFrame,
+    short_window: int,
+    long_window: int,
+    confirm_days: int = 3,
+):
+    df = df.copy()
+
+    df[f"sma_{short_window}"] = df["Close"].rolling(short_window).mean()
+    df[f"sma_{long_window}"] = df["Close"].rolling(long_window).mean()
+
+    # raw crossover signal: 1 if bullish, 0 if not
+    raw = (df[f"sma_{short_window}"] > df[f"sma_{long_window}"]).astype(int)
+
+    # require confirm_days of bullish condition before entering
+    df["signal"] = (
+        raw.rolling(confirm_days)
+           .apply(lambda x: 1 if x.sum() == confirm_days else 0, raw=True)
+           .fillna(0)
+           .astype(int)
+    )
+
+    return df
