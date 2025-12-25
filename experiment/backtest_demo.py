@@ -1,6 +1,5 @@
-from .signals import load_price_history, add_sma_crossover_signal
-from .backtest import run_backtest
-
+from backend.signals import load_price_history, add_sma_crossover_signal
+from backend.backtest import run_backtest
 
 def main():
     tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
