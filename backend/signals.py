@@ -3,14 +3,21 @@ from .db import engine
 
 
 def load_price_history(ticker: str = "AAPL") -> pd.DataFrame:
-    query = f"""
+    query = """
         SELECT date, Close
         FROM price_history
-        WHERE ticker = '{ticker}'
+        WHERE ticker = :ticker
         ORDER BY date;
     """
-    df = pd.read_sql(query, engine)
+    df = pd.read_sql_query(query, engine, params={"ticker": ticker})
+
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.dropna(subset=["Close"])
+    df = df.drop_duplicates(subset=["date"], keep="last")
+    df = df.sort_values("date").reset_index(drop=True)
+
     return df
+
 
 
 def add_sma(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:

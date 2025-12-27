@@ -1,76 +1,71 @@
 import numpy as np
 import pandas as pd
 
-
-def _compute_cagr(equity_curve: pd.Series, periods_per_year: int = 252) -> float:
-    n_periods = len(equity_curve)
-    if n_periods <= 1:
-        return 0.0
-    final_value = equity_curve.iloc[-1]
-    return float(final_value ** (periods_per_year / n_periods) - 1)
-
-
-def _compute_max_drawdown(equity_curve: pd.Series) -> float:
-    rolling_max = equity_curve.cummax()
-    drawdown = equity_curve / rolling_max - 1.0
-    return float(drawdown.min())  # e.g. -0.35 = -35%
-
-
-def _compute_sharpe(returns: pd.Series, periods_per_year: int = 252) -> float:
-    std = returns.std()
-    if std == 0 or np.isnan(std):
-        return 0.0
-    return float((returns.mean() / std) * np.sqrt(periods_per_year))
-
-
-def run_backtest(
+def run_backtest_from_signal(
     df: pd.DataFrame,
-    short_window: int = 20,
-    long_window: int = 50,
-    fee_per_trade: float = 0.0005,  # 0.05% per position change
-    long_only: bool = True,         # NEW: if False, use long/short
+    cost_bps: float = 0.0,   # e.g. 1.0 = 1 basis point per trade (0.01%)
+    annual_trading_days: int = 252,
 ):
+    """
+    Backtest a simple in/out strategy from a precomputed signal.
+    Required columns: date, Close, signal (0/1)
+    Uses next-day execution: position = signal.shift(1)
+    """
     df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date").reset_index(drop=True)
 
-    # Only keep rows where both SMAs exist
-    valid_mask = df[f"sma_{short_window}"].notna() & df[f"sma_{long_window}"].notna()
-    df = df[valid_mask].copy()
+    if "signal" not in df.columns:
+        raise ValueError("df must contain a 'signal' column (0/1)")
 
-    # Daily percent returns of the stock
-    df["daily_return"] = df["Close"].pct_change().fillna(0)
+    # returns
+    df["ret"] = df["Close"].pct_change().fillna(0.0)
 
-    # Base position from signal (0/1)
-    df["position"] = df["signal"].shift(1).fillna(0)
+    # position (trade on next bar)
+    df["position"] = df["signal"].shift(1).fillna(0.0).clip(0.0, 1.0)
 
-    # If long_only = False, treat 0 as -1 (short when not in uptrend)
-    if not long_only:
-        df["position"] = df["position"].replace(0, -1)
+    # transaction costs: charge when position changes
+    # turnover is |pos_t - pos_{t-1}|
+    df["turnover"] = df["position"].diff().abs().fillna(0.0)
+    cost_rate = cost_bps / 10000.0
+    df["cost"] = df["turnover"] * cost_rate
 
-    # Strategy returns before costs
-    df["strategy_return"] = df["daily_return"] * df["position"]
+    df["strategy_ret"] = df["position"] * df["ret"] - df["cost"]
+    df["buy_hold_ret"] = df["ret"]
 
-    # Trading cost: whenever position changes (enter/exit/flip)
-    df["trade"] = df["position"].diff().abs().fillna(0)
-    df["cost"] = df["trade"] * fee_per_trade
+    # equity curves
+    df["strategy_eq"] = (1.0 + df["strategy_ret"]).cumprod()
+    df["buy_hold_eq"] = (1.0 + df["buy_hold_ret"]).cumprod()
 
-    # After costs
-    df["strategy_return_after_costs"] = df["strategy_return"] - df["cost"]
+    def cagr(eq: pd.Series) -> float:
+        n = len(eq)
+        if n < 2:
+            return 0.0
+        years = n / annual_trading_days
+        return float(eq.iloc[-1] ** (1.0 / years) - 1.0)
 
-    # Equity curves
-    buy_hold_curve = (1 + df["daily_return"]).cumprod()
-    strategy_curve_net = (1 + df["strategy_return_after_costs"]).cumprod()
+    def sharpe(r: pd.Series) -> float:
+        # daily Sharpe annualized
+        mu = r.mean()
+        sd = r.std(ddof=0)
+        if sd == 0 or np.isnan(sd):
+            return 0.0
+        return float((mu / sd) * np.sqrt(annual_trading_days))
 
-    return {
-        # final multiples
-        "buy_hold_final": float(buy_hold_curve.iloc[-1]),
-        "strategy_final_net": float(strategy_curve_net.iloc[-1]),
+    def max_dd(eq: pd.Series) -> float:
+        peak = eq.cummax()
+        dd = eq / peak - 1.0
+        return float(dd.min())
 
-        # annualized growth
-        "buy_hold_cagr": _compute_cagr(buy_hold_curve),
-        "strategy_cagr": _compute_cagr(strategy_curve_net),
-
-        # risk metrics
-        "buy_hold_max_dd": _compute_max_drawdown(buy_hold_curve),
-        "strategy_max_dd": _compute_max_drawdown(strategy_curve_net),
-        "strategy_sharpe": _compute_sharpe(df["strategy_return_after_costs"]),
+    out = {
+        "strategy_final_net": float(df["strategy_eq"].iloc[-1]),
+        "strategy_cagr": cagr(df["strategy_eq"]),
+        "strategy_sharpe": sharpe(df["strategy_ret"]),
+        "strategy_max_dd": max_dd(df["strategy_eq"]),
+        "buy_hold_final": float(df["buy_hold_eq"].iloc[-1]),
+        "buy_hold_cagr": cagr(df["buy_hold_eq"]),
+        "buy_hold_sharpe": sharpe(df["buy_hold_ret"]),
+        "buy_hold_max_dd": max_dd(df["buy_hold_eq"]),
+        "in_market_frac": float(df["position"].mean()),
     }
+    return out

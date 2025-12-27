@@ -1,12 +1,32 @@
 import pandas as pd
-from db import engine
+from sqlalchemy import text
+from .db import engine
 
+def main():
+    with engine.connect() as conn:
+        # total rows
+        total = conn.execute(text("SELECT COUNT(*) FROM price_history")).scalar()
+        print(f"Total rows in price_history: {total}")
 
-def show_sample_rows(table_name: str = "price_history", limit: int = 5):
-    query = f"SELECT * FROM {table_name} LIMIT {limit};"
-    df = pd.read_sql(query, engine)
-    print(df)
+        # per-ticker summary
+        q = text("""
+            SELECT
+                ticker,
+                COUNT(*) AS n_rows,
+                MIN(date) AS min_date,
+                MAX(date) AS max_date
+            FROM price_history
+            GROUP BY ticker
+            ORDER BY ticker
+        """)
+        rows = conn.execute(q).fetchall()
 
+    if not rows:
+        print("No rows found.")
+        return
+
+    df = pd.DataFrame(rows, columns=["ticker", "n_rows", "min_date", "max_date"])
+    print(df.to_string(index=False))
 
 if __name__ == "__main__":
-    show_sample_rows()
+    main()
