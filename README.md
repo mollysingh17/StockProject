@@ -23,7 +23,7 @@ python -m experiments.ml_baseline
 pytest
 ```
 
-universe fetches the current S&P 500 ticker list. main downloads 10 years of daily prices for those tickers and SPY. inspectdb shows row counts and date ranges. The experiments run single-stock SMA and ML strategies.
+Universe fetches the current S&P 500 ticker list. Main downloads 10 years of daily prices for those tickers and SPY. Inspectdb shows row counts and date ranges. The experiments run single-stock SMA and ML strategies.
 
 ## Method
 
