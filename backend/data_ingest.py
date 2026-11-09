@@ -25,6 +25,32 @@ def fetch_price_history(ticker: str, period: str = "5y", interval: str = "1d") -
     df["ticker"] = ticker
     return df[[c for c in PRICE_COLUMNS if c in df.columns]]
 
+def fetch_price_history_batch(
+    tickers: list[str], period: str = "10y", interval: str = "1d"
+) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    import yfinance as yf
+
+    raw = yf.download(
+        tickers, period=period, interval=interval, auto_adjust=True,
+        group_by="ticker", threads=True, progress=False,
+    )
+
+    frames, failed = {}, []
+    available = set(raw.columns.get_level_values(0))
+    for ticker in tickers:
+        if ticker not in available:
+            failed.append(ticker)
+            continue
+        df = raw[ticker].dropna(how="all")
+        if df.empty:
+            failed.append(ticker)
+            continue
+        df = df.reset_index()
+        df.columns = [str(c).lower() for c in df.columns]
+        df["ticker"] = ticker
+        frames[ticker] = df[[c for c in PRICE_COLUMNS if c in df.columns]]
+    return frames, failed
+
 
 def store_price_history(df: pd.DataFrame, table_name: str = "price_history") -> None:
     """Idempotent write: replace any existing rows for this ticker and date range.
