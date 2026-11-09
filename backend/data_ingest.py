@@ -1,53 +1,60 @@
-import yfinance as yf
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import Date, bindparam, inspect, text
 
-from .db import engine 
+from backend.db import engine
+
+PRICE_COLUMNS = ["date", "open", "high", "low", "close", "volume", "ticker"]
+
 
 def fetch_price_history(ticker: str, period: str = "5y", interval: str = "1d") -> pd.DataFrame:
-    df = yf.download(ticker, period=period, interval=interval, auto_adjust=True)
+    import yfinance as yf 
 
+    df = yf.download(ticker, period=period, interval=interval, auto_adjust=True, progress=False)
+
+    
+    if df is None or df.empty:
+        raise ValueError(f"No data returned for {ticker}")
+
+  
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [col[0] for col in df.columns]
 
-    df.reset_index(inplace=True)      
-    df.rename(columns={"Date": "date"}, inplace=True)
+    df = df.reset_index()
+    
+    df.columns = [str(c).lower() for c in df.columns]
     df["ticker"] = ticker
-    return df
+    return df[[c for c in PRICE_COLUMNS if c in df.columns]]
+
 
 def store_price_history(df: pd.DataFrame, table_name: str = "price_history") -> None:
-    """Append price rows while preventing duplicate (ticker, date) records.
+    """Idempotent write: replace any existing rows for this ticker and date range.
 
-    DB-agnostic approach: delete any existing rows for the same ticker in the incoming
-    date range, then append the new rows.
+    The delete and the insert run in ONE transaction, so a crash mid-write can't
+    leave the ticker with its old rows deleted and no new rows.
     """
     if df is None or df.empty:
         return
 
     df = df.copy()
+    for col in ("ticker", "date"):
+        if col not in df.columns:
+            raise ValueError(f"store_price_history expects a '{col}' column")
+    if df["ticker"].nunique() != 1:
+        raise ValueError("store_price_history expects one ticker per call")
 
-    if "ticker" not in df.columns:
-        raise ValueError("store_price_history expects a 'ticker' column in df")
-    if "date" not in df.columns:
-        raise ValueError("store_price_history expects a 'date' column in df")
+   
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    df = df.sort_values("date").drop_duplicates(subset=["ticker", "date"], keep="last")
 
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values(["ticker", "date"])
-
-    # Drop duplicates inside the incoming batch
-    df = df.drop_duplicates(subset=["ticker", "date"], keep="last")
-
-    # (Your fetch function returns one ticker at a time, so this is safe)
     ticker = str(df["ticker"].iloc[0])
-    start = df["date"].min()
-    end = df["date"].max()
+    params = {"ticker": ticker, "start_date": df["date"].min(), "end_date": df["date"].max()}
 
-    delete_sql = text(f"""
-        DELETE FROM {table_name}
-        WHERE ticker = :ticker AND date >= :start_date AND date <= :end_date
-    """)
+    delete_sql = text(
+        f"DELETE FROM {table_name} "
+        "WHERE ticker = :ticker AND date >= :start_date AND date <= :end_date"
+    ).bindparams(bindparam("start_date", type_=Date), bindparam("end_date", type_=Date))
 
     with engine.begin() as conn:
-        conn.execute(delete_sql, {"ticker": ticker, "start_date": start, "end_date": end})
-
-    df.to_sql(table_name, engine, if_exists="append", index=False)
+        if inspect(conn).has_table(table_name):
+            conn.execute(delete_sql, params)
+        df.to_sql(table_name, conn, if_exists="append", index=False, dtype={"date": Date()})

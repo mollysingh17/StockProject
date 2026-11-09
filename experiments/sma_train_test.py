@@ -1,220 +1,79 @@
+"""Tune SMA windows on TRAIN only, evaluate on TEST.
+Run:  python -m experiments.sma_train_test
 
-from backend.signals import load_price_history, add_sma_crossover_signal_confirmed
-from backend.backtest import run_backtest
+BUG FIX (warm-up): the old code split first and then computed SMAs on each
+segment, so the first `long_window` days of the test set (200 of ~375 days for
+a 200-day SMA) had NaN SMAs and the strategy sat out of the market, while
+buy-and-hold was scored over the full test set. SMAs only look backward, so we
+compute signals on the full history and THEN slice. No leakage.
+"""
 
-# Best SMA params found from the grid search
-BEST_SMA_PARAMS = {
-    "AAPL":  (5, 100),
-    "MSFT":  (5, 100),
-    "GOOGL": (20, 100),
-    "AMZN":  (20, 200),
-    "NVDA":  (10, 100),
-}
+from backend.backtest import run_backtest_from_signal, train_test_split_by_time
+from backend.signals import add_sma_crossover_signal_confirmed, load_price_history
 
-def train_test_split_by_time(df, train_frac=0.7):
-    """
-    Split a price history DataFrame into train/test segments by time order.
+TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
+SHORT_WINDOWS = [5, 10, 15, 20, 30, 40]
+LONG_WINDOWS = [50, 100, 150, 200]
+COST_BPS = 5.0
 
-    df must be sorted by date ascending.
-    """
-    n = len(df)
-    split_idx = int(n * train_frac)
 
-    train_df = df.iloc[:split_idx].copy()
-    test_df = df.iloc[split_idx:].copy()
+def signals_for(df, short, long, confirm_days):
+    return add_sma_crossover_signal_confirmed(df, short, long, confirm_days)
 
-    return train_df, test_df
 
-def run_sma_backtest_on_segment(df_segment, short_window, long_window, confirm_days):
-    df_segment = df_segment.copy()
+def segment(df_sig, start, end):
+    """Rows of df_sig between two dates (inclusive)."""
+    return df_sig[(df_sig["date"] >= start) & (df_sig["date"] <= end)]
 
-    df_segment = add_sma_crossover_signal_confirmed(
-        df_segment,
-        short_window=short_window,
-        long_window=long_window,
-        confirm_days=confirm_days,
-    )
-    
-    in_market_frac = df_segment["signal"].mean()
-    print(f"In-market fraction: {in_market_frac:.3f}")
-
-    # IMPORTANT: call run_backtest using YOUR actual signature
-    results = run_backtest(
-        df_segment,
-        short_window=short_window,
-        long_window=long_window,
-        fee_per_trade=0.0005,  # keep default, or set explicitly
-        long_only=True,
-    )
-    return results
 
 def find_best_sma_params_on_train(
-    df_train,
-    short_windows,
-    long_windows,
-    confirm_days,
-    use_penalty: bool,
-    exposure_target=0.6,
-    exposure_lambda=0.5,
+    df, train_range, confirm_days, use_penalty, exposure_target=0.6, exposure_lambda=0.5
 ):
-    best_score = None
-    best_params = None
-
-    for short in short_windows:
-        for long in long_windows:
+    best_score, best_params = None, None
+    for short in SHORT_WINDOWS:
+        for long in LONG_WINDOWS:
             if short >= long:
                 continue
+            train_sig = segment(signals_for(df, short, long, confirm_days), *train_range)
+            res = run_backtest_from_signal(train_sig, cost_bps=COST_BPS)
+            in_market = res["in_market_frac"]
 
-            df_sig = add_sma_crossover_signal_confirmed(
-                df_train,
-                short_window=short,
-                long_window=long,
-                confirm_days=confirm_days,
-            )
-
-            in_market = df_sig["signal"].mean()
-
-            # 1) compute sharpe first (so it exists)
-            res = run_backtest(df_sig, short_window=short, long_window=long)
-            sharpe = res["strategy_sharpe"]
-
-            # 2) base score
-            score = sharpe
-
-            # 3) optional exposure-target penalty (your "penalized objective")
+            score = res["strategy_sharpe"]
             if use_penalty:
-                score = score - exposure_lambda * abs(in_market - exposure_target)
-
-            # 4) extra penalty for near-always-long / near-always-out
-            # (instead of hard-skipping)
-            extreme_penalty = 2.0 * max(0.0, in_market - 0.97) + 2.0 * max(0.0, 0.03 - in_market)
-            score = score - extreme_penalty
+                score -= exposure_lambda * abs(in_market - exposure_target)
+            # discourage near-always-in / near-always-out solutions
+            score -= 2.0 * max(0.0, in_market - 0.97) + 2.0 * max(0.0, 0.03 - in_market)
 
             if best_score is None or score > best_score:
-                best_score = score
-                best_params = (short, long)
-
-    # If literally nothing was evaluated (should be rare), fall back
-    if best_params is None:
-        print(
-            f"[tune] confirm_days={confirm_days}: no candidates evaluated. "
-            f"Falling back to {short_windows[0]}/{long_windows[0]}."
-        )
-        return (short_windows[0], long_windows[0]), float("-inf")
-
+                best_score, best_params = score, (short, long)
     return best_params, best_score
 
+
 def main():
-    tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
-    #tickers = ["AAPL"]
-    
-    for ticker in tickers:
-        # Load full price history
+    for ticker in TICKERS:
         df = load_price_history(ticker)
-
-        # Split by time
         train_df, test_df = train_test_split_by_time(df, train_frac=0.7)
+        train_range = (train_df["date"].min(), train_df["date"].max())
+        test_range = (test_df["date"].min(), test_df["date"].max())
 
-        # Use already-known baseline params
-        #short_window, long_window = BEST_SMA_PARAMS[ticker]
-        #confirm_days = 3
         for confirm_days in [0, 3]:
-            short_windows = [5, 10, 15, 20, 30, 40]
-            long_windows  = [50, 100, 150, 200]
-        
-
-            (best_s_plain, best_l_plain), score_plain = find_best_sma_params_on_train(
-                train_df,
-                short_windows=short_windows,
-                long_windows=long_windows,
-                confirm_days=confirm_days,
-                use_penalty=False,
-            )
-
-            (best_s_pen, best_l_pen), score_pen = find_best_sma_params_on_train(
-                train_df,
-                short_windows=short_windows,
-                long_windows=long_windows,
-                confirm_days=confirm_days,
-                use_penalty=True,
-                exposure_target=0.6,
-                exposure_lambda=0.5,
-            )
-
-            plain_train = run_sma_backtest_on_segment(
-                train_df,
-                short_window=best_s_plain,
-                long_window=best_l_plain,
-                confirm_days=confirm_days,
-            )
-
-            pen_train = run_sma_backtest_on_segment(
-                train_df,
-                short_window=best_s_pen,
-                long_window=best_l_pen,
-                confirm_days=confirm_days,
-            )
-
-            plain_test = run_sma_backtest_on_segment(
-                test_df,
-                best_s_plain,
-                best_l_plain,
-                confirm_days,
-            )
-
-            pen_test = run_sma_backtest_on_segment(
-                test_df,
-                best_s_pen,
-                best_l_pen,
-                confirm_days,
-            )
-
             print(f"\n{ticker} | confirm_days={confirm_days}")
-            print(
-                f"PLAIN Sharpe-tune : short={best_s_plain}, long={best_l_plain} | "
-                f"TRAIN score={score_plain:.3f} | "
-                f"TEST Final={plain_test['strategy_final_net']:.3f} "
-                f"CAGR={plain_test['strategy_cagr']:.3f} "
-                f"Sharpe={plain_test['strategy_sharpe']:.3f}"
+            for label, use_penalty in [("PLAIN", False), ("PENALIZED", True)]:
+                (s, l), score = find_best_sma_params_on_train(df, train_range, confirm_days, use_penalty)
+                test = run_backtest_from_signal(
+                    segment(signals_for(df, s, l, confirm_days), *test_range), cost_bps=COST_BPS
                 )
-
+                print(
+                    f"{label:<9} {s}/{l} | TRAIN score={score:.3f} | TEST "
+                    f"Final={test['strategy_final_net']:.3f} CAGR={test['strategy_cagr']:.3f} "
+                    f"Sharpe={test['strategy_sharpe']:.3f} MaxDD={test['strategy_max_dd']:.3f} "
+                    f"InMkt={test['in_market_frac']:.2f}"
+                )
             print(
-                f"PENALIZED tune   : short={best_s_pen}, long={best_l_pen} | "
-                f"TRAIN score={score_pen:.3f} | "
-                f"TEST Final={pen_test['strategy_final_net']:.3f} "
-                f"CAGR={pen_test['strategy_cagr']:.3f} "
-                f"Sharpe={pen_test['strategy_sharpe']:.3f}"
+                f"BUY&HOLD  TEST Final={test['buy_hold_final']:.3f} CAGR={test['buy_hold_cagr']:.3f} "
+                f"Sharpe={test['buy_hold_sharpe']:.3f} MaxDD={test['buy_hold_max_dd']:.3f}"
             )
 
-            print(
-                f"BUY & HOLD (TEST): "
-                f"Final={plain_test['buy_hold_final']:.3f} "
-                f"CAGR={plain_test['buy_hold_cagr']:.3f}"
-            )
-            
-            print(f"{ticker} confirm={confirm_days} | plain={best_s_plain}/{best_l_plain} | pen={best_s_pen}/{best_l_pen}")
-        
-    '''
-    for ticker in tickers:
-        short, long = BEST_SMA_PARAMS[ticker]
 
-        df = load_price_history(ticker)
-        df = add_sma_crossover_signal_confirmed(df, short_window=short, long_window=long)
-        
-        results = run_backtest(df, short_window=short, long_window=long)
-
-        print(f"\n=== {ticker} (short={short}, long={long}) ===")
-        print(f"Buy & Hold:")
-        print(f"  Final:   {results['buy_hold_final']:.3f}x")
-        print(f"  CAGR:    {results['buy_hold_cagr']:.3f}")
-        print(f"  Max DD:  {results['buy_hold_max_dd']:.3f}")
-
-        print(f"SMA Strategy (tuned):")
-        print(f"  Final:   {results['strategy_final_net']:.3f}x")
-        print(f"  CAGR:    {results['strategy_cagr']:.3f}")
-        print(f"  Max DD:  {results['strategy_max_dd']:.3f}")
-        print(f"  Sharpe:  {results['strategy_sharpe']:.3f}")
-
-        '''
 if __name__ == "__main__":
     main()
