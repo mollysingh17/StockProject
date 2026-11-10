@@ -8,7 +8,13 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Data is stored in a local SQLite file (stocks.db) unless DATABASE_URL is set.
+Start the Postgres database (requires Docker Desktop):
+
+```
+docker compose up -d
+```
+
+The code connects to the local database by default. Set DATABASE_URL to use a different one.
 
 ## Usage
 
