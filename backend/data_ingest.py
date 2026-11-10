@@ -26,15 +26,15 @@ def fetch_price_history(ticker: str, period: str = "5y", interval: str = "1d") -
     return df[[c for c in PRICE_COLUMNS if c in df.columns]]
 
 def fetch_price_history_batch(
-    tickers: list[str], period: str = "10y", interval: str = "1d"
+    tickers: list[str], period: str = "10y", start: str | None = None, interval: str = "1d"
 ) -> tuple[dict[str, pd.DataFrame], list[str]]:
     import yfinance as yf
 
+    date_args = {"start": start} if start else {"period": period}
     raw = yf.download(
-        tickers, period=period, interval=interval, auto_adjust=True,
-        group_by="ticker", threads=True, progress=False,
+        tickers, interval=interval, auto_adjust=True,
+        group_by="ticker", threads=True, progress=False, **date_args,
     )
-
     frames, failed = {}, []
     available = set(raw.columns.get_level_values(0))
     for ticker in tickers:
