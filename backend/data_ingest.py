@@ -84,3 +84,29 @@ def store_price_history(df: pd.DataFrame, table_name: str = "price_history") -> 
         if inspect(conn).has_table(table_name):
             conn.execute(delete_sql, params)
         df.to_sql(table_name, conn, if_exists="append", index=False, dtype={"date": Date()})
+
+def history_was_adjusted(df: pd.DataFrame, tolerance: float = 0.001) -> bool:
+    ticker = str(df["ticker"].iloc[0])
+    start = pd.to_datetime(df["date"]).min().strftime("%Y-%m-%d")
+    stored = pd.read_sql_query(
+        text("SELECT date, close FROM price_history WHERE ticker = :ticker AND date >= :start"),
+        engine,
+        params={"ticker": ticker, "start": start},
+        parse_dates=["date"],
+    )
+    if len(stored) < 2:
+        return False
+    stored = stored[stored["date"] < stored["date"].max()]
+    new = df[["date", "close"]].assign(date=pd.to_datetime(df["date"]))
+    both = stored.merge(new, on="date", suffixes=("_old", "_new"))
+    if both.empty:
+        return False
+    return bool(((both["close_new"] / both["close_old"] - 1).abs() > tolerance).any())
+
+def ensure_price_index(table_name: str = "price_history") -> None:
+    with engine.begin() as conn:
+        if inspect(conn).has_table(table_name):
+            conn.execute(text(
+                f"CREATE INDEX IF NOT EXISTS idx_{table_name}_ticker_date "
+                f"ON {table_name} (ticker, date)"
+            ))
