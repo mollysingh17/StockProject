@@ -1,7 +1,7 @@
 import pandas as pd
 from sqlalchemy import inspect, text
 
-from backend.data_ingest import (
+from backend.data.ingest import (
     ensure_price_index,
     fetch_price_history_batch,
     history_was_adjusted,

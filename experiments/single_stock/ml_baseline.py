@@ -1,5 +1,5 @@
 """Gradient-boosted direction classifier with confidence-based position sizing.
-Run:  python -m experiments.ml_baseline
+Run:  python -m experiments.single_stock.ml_baseline
 
 Time layout per ticker (no shuffling, ever):
 
@@ -21,8 +21,8 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 
-from backend.backtest import run_backtest_from_signal
-from backend.signals import load_price_history
+from experiments.single_stock.backtest import run_backtest_from_signal
+from experiments.single_stock.signals import load_price_history
 
 TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
 HORIZON = 63  # predict direction over the next ~3 months (63 trading days)

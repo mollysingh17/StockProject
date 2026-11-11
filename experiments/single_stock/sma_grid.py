@@ -2,8 +2,8 @@
 numbers are optimistic because the same data picks and scores the params).
 Run:  python -m experiments.sma_grid"""
 
-from backend.backtest import run_backtest_from_signal
-from backend.signals import add_sma_crossover_signal, load_price_history
+from experiments.single_stock.backtest import run_backtest_from_signal
+from experiments.single_stock.signals import add_sma_crossover_signal, load_price_history
 
 TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
 SHORT_WINDOWS = [5, 10, 20]

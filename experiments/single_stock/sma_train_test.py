@@ -8,8 +8,8 @@ buy-and-hold was scored over the full test set. SMAs only look backward, so we
 compute signals on the full history and THEN slice. No leakage.
 """
 
-from backend.backtest import run_backtest_from_signal, train_test_split_by_time
-from backend.signals import add_sma_crossover_signal_confirmed, load_price_history
+from experiments.single_stock.backtest import run_backtest_from_signal, train_test_split_by_time
+from experiments.single_stock.signals import add_sma_crossover_signal_confirmed, load_price_history
 
 TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
 SHORT_WINDOWS = [5, 10, 15, 20, 30, 40]

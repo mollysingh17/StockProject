@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backend.backtest import run_backtest_from_signal, train_test_split_by_time
-from experiments.ml_baseline import make_label, size_position
-from backend.signals import (
+from experiments.single_stock.backtest import run_backtest_from_signal, train_test_split_by_time
+from experiments.single_stock.ml_baseline import make_label, size_position
+from experiments.single_stock.signals import (
     add_sma,
     add_sma_crossover_signal,
     add_sma_crossover_signal_confirmed,

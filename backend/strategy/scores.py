@@ -6,7 +6,7 @@ def momentum_score(closes: pd.DataFrame, lookback: int = 252, skip: int = 21) ->
 
 
 if __name__ == "__main__":
-    from backend.prices import load_close_matrix
+    from backend.strategy.prices import load_close_matrix
 
     closes = load_close_matrix()
     scores = momentum_score(closes.drop(columns=["SPY"]))
