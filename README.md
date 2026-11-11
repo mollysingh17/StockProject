@@ -21,22 +21,22 @@ The code connects to the local database by default. Set DATABASE_URL to use a di
 Run from the project root.
 
 ```
-python -m backend.universe
-python -m backend.main
-python -m scripts.inspectdb
-python -m experiments.sma_train_test
-python -m experiments.ml_baseline
+python -m backend.data.tickers
+python -m backend.data.membership
+python -m backend.data.update
+python -m backend.strategy.portfolio
 pytest
 ```
 
-Universe fetches the current S&P 500 ticker list. Main downloads 10 years of daily prices for those tickers and SPY. Inspectdb shows row counts and date ranges. The experiments run single-stock SMA and ML strategies.
+tickers fetches the current S&P 500 list. membership loads historical index membership. update downloads daily prices, only fetching what is missing. portfolio runs the monthly momentum backtest against equal-weight and SPY benchmarks.
 
+The original single-stock experiments are in experiments/single_stock.
 ## Method
 
 Signals computed on day t are traded on day t+1. Parameters are tuned on earlier data and evaluated once on later held-out data. Transaction costs are charged whenever the position changes.
 
 ## Limitations
 
-The ticker list is today's S&P 500 applied to the past, so backtests include companies that joined the index because they did well and leave out companies that were removed. Historical results are optimistic because of this.
+Backtests use point-in-time S&P 500 membership (fja05680/sp500), so each month only ranks stocks that were members at the time. Renamed companies are mapped to their current tickers. Prices for acquired and bankrupt companies are not available from yfinance, so those stocks cannot be picked in the backtest.
 
 Prices come from yfinance, an unofficial Yahoo Finance API.
