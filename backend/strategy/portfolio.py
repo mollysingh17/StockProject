@@ -43,6 +43,8 @@ if __name__ == "__main__":
         "Momentum top 20 (point-in-time)": top_n_weights(point_in_time, rebalance_dates, n=20),
         "Equal weight (today's list)": top_n_weights(today_list, rebalance_dates, n=len(stocks.columns)),
         "Equal weight (point-in-time)": top_n_weights(point_in_time, rebalance_dates, n=len(stocks.columns)),
+        "Momentum top 50 (point-in-time)": top_n_weights(point_in_time, rebalance_dates, n=50),
+        "Momentum top third (point-in-time)": top_n_weights(point_in_time, rebalance_dates, n=167),
     }
 
     start = max(w.index[w.sum(axis=1) > 0][0] for w in weights.values())
