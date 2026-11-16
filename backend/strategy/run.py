@@ -9,15 +9,18 @@ from backend.db import engine
 from backend.strategy.metrics import summarize
 from backend.strategy.portfolio import month_end_dates, portfolio_returns, top_n_weights
 from backend.strategy.prices import load_close_matrix
-from backend.strategy.scores import momentum_score
+from backend.strategy.scores import combined_score, momentum_score, value_score
 
 COST_BPS = 10.0
 BACKTEST_START = "2017-12-01"
 
 STRATEGIES = [
-    {"strategy": "momentum", "n": 20},
     {"strategy": "momentum", "n": 50},
     {"strategy": "momentum", "n": 167},
+    {"strategy": "value", "n": 50},
+    {"strategy": "value", "n": 167},
+    {"strategy": "combo", "n": 50},
+    {"strategy": "combo", "n": 167},
     {"strategy": "equal_weight", "n": None},
 ]
 
@@ -27,16 +30,25 @@ def run_all(universe: str) -> pd.DataFrame:
     stocks = closes.drop(columns=["SPY"])
     rebalance_dates = month_end_dates(stocks.index)
 
-    scores = momentum_score(stocks)
     if universe == "point_in_time":
-        scores = scores.where(load_membership_matrix(stocks.index, stocks.columns))
+        eligible = load_membership_matrix(stocks.index, stocks.columns)
     else:
-        scores = scores[[t for t in current_tickers() if t in scores.columns]]
+        eligible = pd.DataFrame(False, index=stocks.index, columns=stocks.columns)
+        eligible[[t for t in current_tickers() if t in stocks.columns]] = True
+
+    momentum = momentum_score(stocks).where(eligible)
+    value = value_score(stocks).where(eligible)
+    scores = {
+        "momentum": momentum,
+        "value": value,
+        "combo": combined_score(momentum, value),
+        "equal_weight": momentum,
+    }
 
     weights = {}
     for params in STRATEGIES:
-        n = params["n"] or len(scores.columns)
-        weights[json.dumps(params)] = top_n_weights(scores, rebalance_dates, n=n)
+        n = params["n"] or len(stocks.columns)
+        weights[json.dumps(params)] = top_n_weights(scores[params["strategy"]], rebalance_dates, n=n)
 
     start = max(
         max(w.index[w.sum(axis=1) > 0][0] for w in weights.values()),
