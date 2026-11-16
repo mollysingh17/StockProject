@@ -24,7 +24,7 @@ Run from the project root.
 python -m backend.data.tickers
 python -m backend.data.membership
 python -m backend.data.update
-python -m backend.strategy.portfolio
+python -m backend.strategy.run
 pytest
 ```
 
