@@ -1,9 +1,9 @@
 import sys
-
+import os
 import pandas as pd
 import requests
 
-USER_AGENT = "Malvina Singh malvinasingh17@gmail.com"
+USER_AGENT = os.environ["SEC_USER_AGENT"]
 HEADERS = {"User-Agent": USER_AGENT}
 
 CONCEPTS = [

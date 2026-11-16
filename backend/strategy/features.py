@@ -3,6 +3,7 @@ import pandas as pd
 from backend.strategy.scores import momentum_score, value_score
 
 FEATURES = ["mom_12_1", "mom_6_1", "mom_1", "value_5y", "vol_3m", "dist_200"]
+FUNDAMENTAL_FEATURES = ["leverage", "book_to_market", "size"]
 
 
 def raw_features(closes: pd.DataFrame) -> dict[str, pd.DataFrame]:
@@ -17,13 +18,21 @@ def raw_features(closes: pd.DataFrame) -> dict[str, pd.DataFrame]:
     }
 
 
-def build_dataset(closes: pd.DataFrame, eligible: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.DataFrame:
+def build_dataset(
+    closes: pd.DataFrame,
+    eligible: pd.DataFrame,
+    dates: pd.DatetimeIndex,
+    extra: dict[str, pd.DataFrame] | None = None,
+) -> pd.DataFrame:
     members = eligible.loc[dates]
     monthly = closes.loc[dates]
 
     columns = {}
     for name, frame in raw_features(closes).items():
         columns[name] = frame.loc[dates].where(members).rank(axis=1, pct=True).stack()
+    for name, frame in (extra or {}).items():
+        aligned = frame.reindex(index=dates, columns=closes.columns)
+        columns[name] = aligned.where(members).rank(axis=1, pct=True).stack()
     columns["fwd_ret"] = (monthly.shift(-1) / monthly - 1).where(members).stack()
 
     data = pd.concat(columns, axis=1)

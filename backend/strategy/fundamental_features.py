@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from sqlalchemy import bindparam, text
 
@@ -36,17 +37,52 @@ def leverage(fund: pd.DataFrame, dates: pd.DatetimeIndex, tickers: pd.Index) -> 
     return (assets - equity) / assets
 
 
+def load_splits() -> pd.DataFrame:
+    with engine.connect() as conn:
+        return pd.read_sql_query(text("SELECT ticker, date, ratio FROM splits"), conn, parse_dates=["date"])
+
+
+def split_adjust_shares(fund: pd.DataFrame, splits: pd.DataFrame) -> pd.DataFrame:
+    shares = fund[fund["item"] == "shares"].sort_values("end")
+    later = splits.sort_values(["ticker", "date"], ascending=[True, False])
+    later = later.assign(factor=later.groupby("ticker")["ratio"].cumprod()).sort_values("date")
+    merged = pd.merge_asof(
+        shares, later[["ticker", "date", "factor"]],
+        left_on="end", right_on="date", by="ticker",
+        direction="forward", allow_exact_matches=False,
+    )
+    merged["val"] = merged["val"] * merged["factor"].fillna(1.0)
+    return merged[fund.columns]
+
+
+def market_value_features(
+    fund: pd.DataFrame, splits: pd.DataFrame, closes: pd.DataFrame, dates: pd.DatetimeIndex
+) -> dict[str, pd.DataFrame]:
+    tickers = closes.columns
+    shares = point_in_time(split_adjust_shares(fund, splits), "shares", dates, tickers)
+    equity = point_in_time(fund, "equity", dates, tickers)
+    market_cap = (closes.loc[dates] * shares).where(lambda x: x > 0)
+    return {
+        "market_cap": market_cap,
+        "book_to_market": equity / market_cap,
+        "size": np.log(market_cap),
+    }
+
+
 if __name__ == "__main__":
     from backend.strategy.portfolio import month_end_dates
     from backend.strategy.prices import load_close_matrix
 
     closes = load_close_matrix().drop(columns=["SPY"])
     dates = month_end_dates(closes.index)
-    fund = load_fundamentals(["assets", "equity"])
-    lev = leverage(fund, dates, closes.columns)
+    fund = load_fundamentals(["equity", "shares"])
+    features = market_value_features(fund, load_splits(), closes, dates)
 
-    print("Stocks with a leverage value, each December:")
-    december = lev[lev.index.month == 12]
-    print(december.notna().sum(axis=1).set_axis(december.index.year).to_string())
-    print("\nLatest leverage:")
-    print(lev.iloc[-1][["AAPL", "JPM", "MSFT", "XOM"]].round(3).to_string())
+    cap = features["market_cap"] / 1e9
+    for date in [dates[dates.year == 2019][-1], dates[-1]]:
+        print(f"Market value in $ billions on {date.date()}:")
+        print(cap.loc[date, ["AAPL", "NVDA", "JPM", "TSLA"]].round(0).to_string())
+        print()
+    print("Book-to-market, latest:")
+    print(features["book_to_market"].iloc[-1][["AAPL", "NVDA", "JPM", "TSLA"]].round(3).to_string())
+    print(f"\nStocks with a book-to-market value, latest month: {features['book_to_market'].iloc[-1].notna().sum()}")
