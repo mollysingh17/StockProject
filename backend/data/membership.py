@@ -37,7 +37,7 @@ RENAMES = {
 }
 
 
-def fetch_membership(since: str = "2015-01-01") -> pd.DataFrame:
+def fetch_membership(since: str = "1999-01-01") -> pd.DataFrame:
     csv_text = requests.get(MEMBERSHIP_URL, timeout=60).text
     df = pd.read_csv(StringIO(csv_text), parse_dates=["date"])
     df = df[df["date"] >= since]
@@ -80,4 +80,4 @@ if __name__ == "__main__":
     per_date = df.groupby("date")["ticker"].count()
     print(f"Stored {len(df)} rows: {per_date.size} snapshots from {per_date.index.min()} to {per_date.index.max()}")
     print(f"Members per snapshot: min {per_date.min()}, max {per_date.max()}")
-    print(f"Distinct tickers since 2015: {df['ticker'].nunique()}")
+    print(f"Distinct tickers: {df['ticker'].nunique()}")

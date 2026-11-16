@@ -12,6 +12,7 @@ from backend.strategy.prices import load_close_matrix
 from backend.strategy.scores import momentum_score
 
 COST_BPS = 10.0
+BACKTEST_START = "2017-12-01"
 
 STRATEGIES = [
     {"strategy": "momentum", "n": 20},
@@ -37,7 +38,10 @@ def run_all(universe: str) -> pd.DataFrame:
         n = params["n"] or len(scores.columns)
         weights[json.dumps(params)] = top_n_weights(scores, rebalance_dates, n=n)
 
-    start = max(w.index[w.sum(axis=1) > 0][0] for w in weights.values())
+    start = max(
+        max(w.index[w.sum(axis=1) > 0][0] for w in weights.values()),
+        pd.Timestamp(BACKTEST_START),
+    )
     returns = {
         key: portfolio_returns(stocks.reindex(columns=w.columns), w, cost_bps=COST_BPS).loc[start:].iloc[1:]
         for key, w in weights.items()
