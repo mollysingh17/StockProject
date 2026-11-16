@@ -6,7 +6,9 @@ import pandas as pd
 
 from backend.data.membership import current_tickers, load_membership_matrix
 from backend.db import engine
+from backend.strategy.features import build_dataset
 from backend.strategy.metrics import summarize
+from backend.strategy.ml import walk_forward_predictions
 from backend.strategy.portfolio import month_end_dates, portfolio_returns, top_n_weights
 from backend.strategy.prices import load_close_matrix
 from backend.strategy.scores import combined_score, momentum_score, value_score
@@ -21,6 +23,8 @@ STRATEGIES = [
     {"strategy": "value", "n": 167},
     {"strategy": "combo", "n": 50},
     {"strategy": "combo", "n": 167},
+    {"strategy": "ml", "n": 50},
+    {"strategy": "ml", "n": 167},
     {"strategy": "equal_weight", "n": None},
 ]
 
@@ -38,10 +42,17 @@ def run_all(universe: str) -> pd.DataFrame:
 
     momentum = momentum_score(stocks).where(eligible)
     value = value_score(stocks).where(eligible)
+
+    data = build_dataset(stocks, eligible, rebalance_dates)
+    first_test_year = pd.Timestamp(BACKTEST_START).year - 1
+    ml = walk_forward_predictions(data, first_test_year).unstack()
+    ml = ml.reindex(index=stocks.index, columns=stocks.columns)
+
     scores = {
         "momentum": momentum,
         "value": value,
         "combo": combined_score(momentum, value),
+        "ml": ml,
         "equal_weight": momentum,
     }
 
