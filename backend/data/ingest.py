@@ -1,0 +1,112 @@
+import pandas as pd
+from sqlalchemy import Date, bindparam, inspect, text
+
+from backend.db import engine
+
+PRICE_COLUMNS = ["date", "open", "high", "low", "close", "volume", "ticker"]
+FULL_HISTORY_START = "2000-01-01"
+
+
+def fetch_price_history(ticker: str, period: str = "5y", interval: str = "1d") -> pd.DataFrame:
+    import yfinance as yf 
+
+    df = yf.download(ticker, period=period, interval=interval, auto_adjust=True, progress=False)
+
+    
+    if df is None or df.empty:
+        raise ValueError(f"No data returned for {ticker}")
+
+  
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [col[0] for col in df.columns]
+
+    df = df.reset_index()
+    
+    df.columns = [str(c).lower() for c in df.columns]
+    df["ticker"] = ticker
+    return df[[c for c in PRICE_COLUMNS if c in df.columns]]
+
+def fetch_price_history_batch(
+    tickers: list[str], start: str | None = None, interval: str = "1d"
+) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    import yfinance as yf
+
+    raw = yf.download(
+        tickers, start=start or FULL_HISTORY_START, interval=interval, auto_adjust=True,
+        group_by="ticker", threads=True, progress=False,
+    )
+    frames, failed = {}, []
+    available = set(raw.columns.get_level_values(0))
+    for ticker in tickers:
+        if ticker not in available:
+            failed.append(ticker)
+            continue
+        df = raw[ticker].dropna(how="all")
+        if df.empty:
+            failed.append(ticker)
+            continue
+        df = df.reset_index()
+        df.columns = [str(c).lower() for c in df.columns]
+        df["ticker"] = ticker
+        frames[ticker] = df[[c for c in PRICE_COLUMNS if c in df.columns]]
+    return frames, failed
+
+
+def store_price_history(df: pd.DataFrame, table_name: str = "price_history") -> None:
+    """Idempotent write: replace any existing rows for this ticker and date range.
+
+    The delete and the insert run in ONE transaction, so a crash mid-write can't
+    leave the ticker with its old rows deleted and no new rows.
+    """
+    if df is None or df.empty:
+        return
+
+    df = df.copy()
+    for col in ("ticker", "date"):
+        if col not in df.columns:
+            raise ValueError(f"store_price_history expects a '{col}' column")
+    if df["ticker"].nunique() != 1:
+        raise ValueError("store_price_history expects one ticker per call")
+
+   
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    df = df.sort_values("date").drop_duplicates(subset=["ticker", "date"], keep="last")
+
+    ticker = str(df["ticker"].iloc[0])
+    params = {"ticker": ticker, "start_date": df["date"].min(), "end_date": df["date"].max()}
+
+    delete_sql = text(
+        f"DELETE FROM {table_name} "
+        "WHERE ticker = :ticker AND date >= :start_date AND date <= :end_date"
+    ).bindparams(bindparam("start_date", type_=Date), bindparam("end_date", type_=Date))
+
+    with engine.begin() as conn:
+        if inspect(conn).has_table(table_name):
+            conn.execute(delete_sql, params)
+        df.to_sql(table_name, conn, if_exists="append", index=False, dtype={"date": Date()})
+
+def history_was_adjusted(df: pd.DataFrame, tolerance: float = 0.001) -> bool:
+    ticker = str(df["ticker"].iloc[0])
+    start = pd.to_datetime(df["date"]).min().strftime("%Y-%m-%d")
+    stored = pd.read_sql_query(
+        text("SELECT date, close FROM price_history WHERE ticker = :ticker AND date >= :start"),
+        engine,
+        params={"ticker": ticker, "start": start},
+        parse_dates=["date"],
+    )
+    if len(stored) < 2:
+        return False
+    stored = stored[stored["date"] < stored["date"].max()]
+    new = df[["date", "close"]].assign(date=pd.to_datetime(df["date"]))
+    both = stored.merge(new, on="date", suffixes=("_old", "_new"))
+    if both.empty:
+        return False
+    return bool(((both["close_new"] / both["close_old"] - 1).abs() > tolerance).any())
+
+def ensure_price_index(table_name: str = "price_history") -> None:
+    with engine.begin() as conn:
+        if inspect(conn).has_table(table_name):
+            conn.execute(text(
+                f"CREATE INDEX IF NOT EXISTS idx_{table_name}_ticker_date "
+                f"ON {table_name} (ticker, date)"
+            ))

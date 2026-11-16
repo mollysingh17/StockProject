@@ -1,6 +1,6 @@
 import pandas as pd
 from sqlalchemy import text
-from .db import engine
+from backend.db import engine
 
 def main():
     with engine.connect() as conn:

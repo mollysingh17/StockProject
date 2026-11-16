@@ -1,0 +1,9 @@
+pandas
+numpy
+scikit-learn
+sqlalchemy>=2.0
+yfinance
+psycopg2-binary
+requests
+lxml
+pytest
